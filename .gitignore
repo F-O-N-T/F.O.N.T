@@ -1,2 +1,6 @@
-*/.ipynb_*
-*/*.ipynb
+*/.ipynb_checkpoint
+__pycache__
+*.ipynb
+*.db
+crawler/naver_crawler.py
+
