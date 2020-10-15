@@ -1,17 +1,5 @@
 import time
 
-class Article:
-    def __init__(self, title, date, contents, category, url):
-        self.title = title
-        self.date = date
-        self.contents = contents
-        self.category = category
-        self.url = url
-    def __repr__(self):
-        return "Article(" + ",".join(self.title, self.date, self.contents, self.category, self.category) + ")"
-    def to_array(self):
-        return [self.title, self.date, self.contents, self.category, self.url]
-
 class InternalServerError(Exception):
     pass
 
@@ -26,7 +14,7 @@ def crawl_naver_one(url):
     category = ""
     url = ""
     raise NotImplementedError
-    dic = [title, date, contents, category, url]
+    dic = {'title':title, 'date':date, 'contents':contents, 'category':category, 'url':url}
     return dic
 
 def crawl_naver_newest(number, return_urls_only=False):

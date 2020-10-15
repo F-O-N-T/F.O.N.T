@@ -152,13 +152,13 @@ class FONTBagOfWord:
     def process(self, src='')->(list,list):
         indexvec = []
         freqvec = []
+        src = src.replace('"', '')
+        src = src.replace("'", "")
         article_headers=['(서울=연합뉴스)','[서울=뉴시스]','[파이낸셜뉴스]','(서울=뉴스1)']
         article_footers=['공감언론 뉴시스가 독자 여러분의 소중한 제보를 기다립니다. 뉴스 가치나 화제성이 있다고 판단되는 사진 또는 영상을 뉴시스 사진영상부(n-photo@newsis.com)로 보내주시면 적극 반영하겠습니다.<ⓒ 공감언론 뉴시스통신사. 무단전재-재배포 금지>',
                          '무단전재 및 재배포금지','무단 전재-재배포 금지','<ⓒ경제를 보는 눈, 세계를 보는 창 아시아경제 무단전재 배포금지>'
                          '뉴스1코리아()',
                          "<저작권자 ⓒ '성공을 꿈꾸는 사람들의 경제 뉴스' 머니S, 무단전재 및 재배포 금지>"]
-        src = src.replace('"', '')
-        src = src.replace("'", "")
         for i in article_headers:
             src = src.replace(i, '')
         for i in article_footers:
@@ -177,6 +177,7 @@ class FONTBagOfWord:
             word_to_search = i[0][0]
             #word_tag = i[0][1]
             word_cnt = i[1]
+            word_index = 0
             try:
                 word_index = self.__wordvec_dict[word_to_search]
             except KeyError:
