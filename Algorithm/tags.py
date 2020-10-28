@@ -11,9 +11,11 @@
 # In[2]:
 
 
-from konlpy.tag import Kkma
+from konlpy.tag import Okt as Tagger
 from konlpy.utils import pprint
 from collections import Counter
+import numpy as np
+import re
 
 
 # In[3]:
@@ -80,7 +82,7 @@ class WordDB:
         self.__cursor = None
 
 
-# In[1]:
+# In[11]:
 
 
 class FONTBagOfWord:
@@ -93,13 +95,13 @@ class FONTBagOfWord:
     #bag.get(3)
     #bag['word']
     def __init__(self):
-        self.__kkma = Kkma()
+        self.__tagger = Tagger()
         self.__word_db = WordDB()
-        self.__accepted = ['NNG','NNP','NP','VV','VA', 'OH'] #set the korean tags to read
-        self.__wordvec_index = {} #wdictionary of wordvec with its index {index:wordvec}
+        self.__wordvec_index = [] #wdictionary of wordvec with its index {index:wordvec}
         self.__wordvec_dict = {} #wdictionary of wordvec with its index {wordvec:index}
         self.__new_words = []
         self.__updated = False
+        self.__han_filter = re.compile('[ ㄱ-ㅣ가-힣]+')
         
     def __del__(self):
         try:
@@ -115,6 +117,9 @@ class FONTBagOfWord:
         except:
             self.__word_db.conn(filename)
         try:
+            length = len(self.__word_db.get())
+            self.__wordvec_index = [None] * (length + 1)
+            self.__wordvec_index[0] = 0
             for col in self.__word_db.get():
                 self.__wordvec_index[col[0]]=col[1] #(index to word)
                 self.__wordvec_dict[col[1]]=col[0] #(word to index)
@@ -133,27 +138,24 @@ class FONTBagOfWord:
     
     def __repr__(self):
         return 'font_bag_of_word(len=' + str(len(self)) +')'
-    
-    def __getitem__(self, i):
-        #exceptions will be handled from the list __wordvec
+
+    def __iter__(self):
+        return self.__wordvec_dict.keys().__iter__()
+
+    def get(self, i):
+        if type(i) == int:
+            return self.__wordvec_index[i]
         if type(i) == str:
             return self.__wordvec_dict[i]
         else:
             raise IndexError("FONTBagOfWord index out of range")
 
-    def get(self, i):
-        if type(i) == int:
-            return self.__wordvec_index[i]
-        else:
-            return self[i]
     def __len__(self):
         return len(self.__wordvec_dict)
-    
+
     def process(self, src='')->(list,list):
         indexvec = []
         freqvec = []
-        src = src.replace('"', '')
-        src = src.replace("'", "")
         article_headers=['(서울=연합뉴스)','[서울=뉴시스]','[파이낸셜뉴스]','(서울=뉴스1)']
         article_footers=['공감언론 뉴시스가 독자 여러분의 소중한 제보를 기다립니다. 뉴스 가치나 화제성이 있다고 판단되는 사진 또는 영상을 뉴시스 사진영상부(n-photo@newsis.com)로 보내주시면 적극 반영하겠습니다.<ⓒ 공감언론 뉴시스통신사. 무단전재-재배포 금지>',
                          '무단전재 및 재배포금지','무단 전재-재배포 금지','<ⓒ경제를 보는 눈, 세계를 보는 창 아시아경제 무단전재 배포금지>'
@@ -163,48 +165,52 @@ class FONTBagOfWord:
             src = src.replace(i, '')
         for i in article_footers:
             src = src.replace(i, '')
-        
+        src = src.replace('"', '')
+        src = src.replace("'", '')
+        src = self.__han_filter.findall(src)
+        if not src:
+            return [],[]
+        src = ' '.join(src)
         #divide by tags using kkma engine in koNLPy module
-        pos = self.__kkma.pos(src)
-        debug_print(pos)
-        #accept only NNG(common nouns), NNP(proper nouns), NP(pronoun), VV(verb), VA(adj.)
-        pos = [i for i in pos if i[1] in self.__accepted]
+        pos = self.__tagger.nouns(src)
+        pos = [i for i in pos if len(i)>1]
         debug_print(pos)
         #get (at most) 200s of most commonly used words
         cnt = Counter(pos).most_common(200)
-        
         for i in cnt:
-            word_to_search = i[0][0]
-            #word_tag = i[0][1]
+            word_to_search = i[0]
             word_cnt = i[1]
             word_index = 0
             try:
                 word_index = self.__wordvec_dict[word_to_search]
             except KeyError:
-                self.__wordvec_index[len(self.__wordvec_dict)] = word_to_search
+                self.__wordvec_index.append(word_to_search)
                 self.__wordvec_dict[word_to_search] = len(self.__wordvec_dict)
+                
                 word_index = self.__wordvec_dict[word_to_search]
+                
                 self.__new_words.append(word_to_search)
                 self.__updated = True
+    
             indexvec.append(word_index)
             freqvec.append(word_cnt)
         return indexvec, freqvec
 
 
-# In[2]:
+# In[12]:
 
 
-def test_kkma_konlpy():
-    kkma = Kkma()
+def test_tagger_konlpy():
+    tagger = Tagger()
     while True:
         src = input()
         if src == '':
             break
-        pos = kkma.pos(src)
+        pos = tagger.nouns(src)
         print(pos)
 
 
-# In[3]:
+# In[13]:
 
 
 def test_font_bag_of_word(filename = ''):
@@ -222,12 +228,12 @@ def test_font_bag_of_word(filename = ''):
     bag.to_file(filename)
 
 
-# In[4]:
+# In[14]:
 
 
 if __name__ == '__main__':
     pass
-    test_kkma_konlpy()
+    test_tagger_konlpy()
     test_font_bag_of_word('word.db')
 
 
