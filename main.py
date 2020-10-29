@@ -13,7 +13,7 @@ from crawler.naver_crawler import InternalServerError
 from crawler.database import ArticleDB, ArticleVectorDB
 from sklearn.cluster import MiniBatchKMeans, AgglomerativeClustering
 from scipy.cluster.hierarchy import dendrogram
-
+from scipy.stats import rankdata
 import numpy as np
 from sqlite3 import IntegrityError, OperationalError
 
@@ -26,52 +26,10 @@ import time
 
 ARTICLEDB='article.db'
 WORDDB='words.db'
-VECDB_VERSION=4
+VECDB_VERSION=7
 
 
 # In[3]:
-
-
-def get_stored_articles(num_articles='-1', debug_print=False, max_len=5000):
-    vecs = []
-    bag = FONTBagOfWord()
-    bag.from_file(WORDDB)
-    it = 1
-    with ArticleDB(ARTICLEDB) as articleDB:
-        if num_articles==-1:
-            adb = articleDB.get()
-        else:
-            adb = articleDB.get_random(num_articles)
-
-    with ArticleVectorDB() as avdb:
-        try:
-            avdb.create(ARTICLEDB)
-        except OperationalError:
-            avdb.conn(ARTICLEDB)
-        for article in adb:
-            vec = avdb.get(a_id=article['id'],version=VECDB_VERSION)
-            if vec:
-                vecs.append({'vector':vec,'article':article})
-            else:
-                proc = {'data':bag.process(article['contents'])}
-                vecs.append({'vector':proc, 'article':article})
-                avdb.update(a_id=article['id'], version=VECDB_VERSION, index=proc['data'][0], freq=proc['data'][1])
-            if debug_print and it % 100 == 0:
-                print("Processed", it, "articles")
-            it += 1
-    bag.to_file(WORDDB)
-    return vecs, bag
-
-
-# In[4]:
-
-
-#bag = FONTBagOfWord()
-#bag.from_file("words.db")
-#articles = get_stored_articles(5000)
-
-
-# In[5]:
 
 
 def run_crawler(num_of_page, debug_print=True):
@@ -149,21 +107,85 @@ def run_crawler(num_of_page, debug_print=True):
                         print("got " + str(count) + " articles")
 
 
-# In[6]:
+# In[4]:
 
 
-def run_kmeans(article_db, bag, n_clusters, debug_print=False):
+def get_stored_articles(num_articles='-1', debug_print=False, max_len=5000):
+    vecs = []
+    bag = FONTBagOfWord()
+    bag.from_file(WORDDB)
+    it = 1
+    wordcnt = [0] * len(bag)
+    with ArticleDB(ARTICLEDB) as articleDB:
+        if num_articles==-1:
+            adb = articleDB.get()
+        else:
+            adb = articleDB.get_random(num_articles)
+
+    with ArticleVectorDB() as avdb:
+        try:
+            avdb.create(ARTICLEDB)
+        except OperationalError:
+            avdb.conn(ARTICLEDB)
+        for article in adb:
+            vec = avdb.get(a_id=article['id'],version=VECDB_VERSION)
+            if vec:
+                vec = vec['data']
+                if(len(vec) != 2):
+                    print(vec)
+                vecs.append({'vector':vec,'article':article})
+            else:
+                vec = bag.process(article['contents'])
+                vecs.append({'vector':vec, 'article':article})
+                avdb.update(a_id=article['id'], version=VECDB_VERSION, index=vec[0], freq=vec[1])
+            
+            idx = vec[0]
+            freq = vec[1]
+            length = len(vec[0])
+            for i in range(length):
+                try:
+                    wordcnt[idx[i]] += freq[i]
+                except IndexError:
+                    wordcnt += [0] * (idx[i] - len(wordcnt) + 1)
+                    wordcnt[idx[i]] = freq[i]
+
+                    
+            if debug_print and it % 100 == 0:
+                print("Processed", it, "articles")
+            it += 1
+
+    rank = np.argsort(np.argsort(wordcnt)[::-1])
+    for i in range(len(vecs)):
+        vec = np.zeros(max_len)
+        idx = vecs[i]['vector'][0]
+        freq = vecs[i]['vector'][1]
+        for j in range(len(idx)):
+            if(idx[j] < max_len):
+                vec[idx[j]] = freq[j]
+        vecs[i]['vector'] = vec
+        if (i+1) % 100 == 0:
+            print("Vectorized", i+1, "articles")
+    bag.to_file(WORDDB)
+    return vecs, bag
+
+
+# In[5]:
+
+
+def run_kmeans(article_db, bag, n_clusters, debug_print=False, max_len=5000):
     #vecs: list of ((indexvec, freqvec),(id, title, date, contents, category, url))
     #len(vecs): num of articles
     #len(bag): num of words in the bag
-    v = np.zeros([len(article_db),len(bag)])
+    v = np.zeros([len(article_db),max_len])
     #v: dataset for clustering algorithm v[i,j]: i-th article, num of words bag[j] used
-    try:
-        for i in range(len(article_db)):
-            for j in range(len(article_db[i]['vector']['data'][0])):
-                v[i, article_db[i]['vector']['data'][0][j]] = article_db[i]['vector']['data'][1][j]
-    except Exception as e:
-        raise(e)
+    for i in range(len(article_db)):
+        v[i] = article_db[i]['vector']
+    #try:
+    #    for i in range(len(article_db)):
+    #        for j in range(len(article_db[i]['vector'][0])):
+    #            v[i, article_db[i]['vector'][0][j]] = article_db[i]['vector'][1][j]
+    #except Exception as e:
+    #    raise(e)
     for i in range(len(v)):
         norm = np.linalg.norm(v[i])
         if norm < 0.00001:
@@ -190,7 +212,7 @@ def run_kmeans(article_db, bag, n_clusters, debug_print=False):
     return kmeans
 
 
-# In[7]:
+# In[6]:
 
 
 def run_agglomerative(kmeans_centers):
@@ -198,7 +220,7 @@ def run_agglomerative(kmeans_centers):
     return clustering
 
 
-# In[8]:
+# In[7]:
 
 
 def plot_dendrogram(model, **kwargs):
@@ -226,15 +248,15 @@ def plot_dendrogram(model, **kwargs):
     plt.show()
 
 
-# In[9]:
+# In[8]:
 
 
-def run_clustering(article_num, cnt_kmeans_centers, debug_print=False):
+def run_clustering(n_articles, n_clusters, debug_print=False):
     if debug_print:
         ct = time.time()
         print("Running...")
 
-    articles, bag = get_stored_articles(article_num, debug_print)
+    articles, bag = get_stored_articles(n_articles, debug_print)
 
     if debug_print:
         print("Retrieved the stored articles.")
@@ -242,7 +264,7 @@ def run_clustering(article_num, cnt_kmeans_centers, debug_print=False):
         ct = time.time()
         print("Running kmeans algorithm...")
 
-    kmeans = run_kmeans(articles, bag, cnt_kmeans_centers, debug_print)
+    kmeans = run_kmeans(articles, bag, n_clusters, debug_print)
 
     if debug_print:
         print("Running Agglomerative algorithm...")
@@ -259,22 +281,22 @@ def run_clustering(article_num, cnt_kmeans_centers, debug_print=False):
     return articles, kmeans, tree
 
 
-# In[16]:
+# In[13]:
 
 
 if __name__ == '__main__':
     import winsound
-    run_crawler(20,debug_print=True)
+    #run_crawler(20,debug_print=True)
     
-    #try:
-    #    articles, kmeans, tree = run_clustering(1500,100, debug_print=True)
-    #except Exception as e:
-    #    winsound.Beep(500,500)
-    #    raise(e)
+    try:
+        articles, kmeans, tree = run_clustering(1500,50, debug_print=True)
+    except Exception as e:
+        winsound.Beep(500,500)
+        raise(e)
     winsound.Beep(1000,500)
 
 
-# In[11]:
+# In[10]:
 
 
 def _iter_tree_downward(tree, cluster_id):
@@ -301,27 +323,25 @@ def _iter_tree_from(tree, cluster_id):
             current = i + len(tree.labels_)
 
 
-# In[12]:
+# In[17]:
 
 
-def print_all_in_kmeans(kmeans, articles, category):
-    print([articles[i] for i in range(len(kmeans.labels_)) if kmeans.labels_[i]==category])
+def all_in_kmeans(kmeans, articles, category):
+    return [articles[i] for i in range(len(kmeans.labels_)) if kmeans.labels_[i]==category]
 
-def print_articles_in_kmeans(kmeans, articles, category):
+def articles_in_kmeans(kmeans, articles, category):
     result = [articles[i]['article']['contents'] for i in range(len(kmeans.labels_)) if kmeans.labels_[i]==category] 
-    print(str(category)+'('+str(len(result))+')', end=' ')
-#    print('\n\n'.join(result))
-
-def print_categories_by_topics(kmeans, articles, topic):
-    result = [kmeans.labels_[i] for i in range(len(articles)) if articles[i]['article']['category'] == '정치']
-    print([kmeans.labels_[i] for i in range(len(result))])
     return result
 
-def print_vector_in_kmeans(kmeans, articles):
+def categories_by_topics(kmeans, articles, topic):
+    result = [kmeans.labels_[i] for i in range(len(articles)) if articles[i]['article']['category'] == '정치']
+    return result
+
+def vector_in_kmeans(kmeans, articles):
     print([articles[i]['vector']['data'] for i in range(len(kmeans.labels_)) if kmeans.labels_[i]==category])
 
 
-# In[13]:
+# In[18]:
 
 
 def predict(kmeans, tree, contents):
@@ -341,6 +361,17 @@ def predict(kmeans, tree, contents):
    # for i in _iter_tree_from(tree, tlabel):
    #     print_articles_in_kmeans(kmeans, articles, t_to_k[i])
    #     print('\n\n\n\n\n--------------------------\n\n\n\n\n')
+
+
+# In[21]:
+
+
+for i in range(50):
+    print('category=', i)
+    for article in articles_in_kmeans(kmeans, articles, i):
+        print(article, end='\n\n')
+    print('=======================================================')
+    input()
 
 
 # In[ ]:
