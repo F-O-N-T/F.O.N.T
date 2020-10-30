@@ -14,6 +14,7 @@ from sqlite3 import IntegrityError, OperationalError
 
 import matplotlib.pylab as plt
 import time
+from threading import Thread, Lock
 
 
 # In[2]:
@@ -27,7 +28,7 @@ VECDB_VERSION=7
 # In[3]:
 
 
-def get_stored_articles(num_articles='-1', debug_print=False, max_len=5000):
+def get_stored_articles(num_articles='-1', max_len=5000, debug_print=False):
     vecs = []
     bag = FONTBagOfWord()
     bag.from_file(WORDDB)
@@ -85,7 +86,7 @@ def get_stored_articles(num_articles='-1', debug_print=False, max_len=5000):
 # In[4]:
 
 
-def run_kmeans(article_db, bag, n_clusters, debug_print=False, max_len=5000):
+def run_kmeans(article_db, bag, n_clusters,  max_len=5000, debug_print=False):
     
     v = np.zeros([len(article_db),max_len])
     #v: dataset for clustering algorithm v[i,j]: i-th article, num of words bag[j] used
@@ -108,13 +109,12 @@ def run_kmeans(article_db, bag, n_clusters, debug_print=False, max_len=5000):
     verbose = 0
     if debug_print:
         verbose=1
-    kmeans = MiniBatchKMeans(n_clusters=n_clusters, init='random',tol=0.005,
-                             batch_size=batch_size, verbose=verbose, reassignment_ratio=10**-3)
+    kmeans = MiniBatchKMeans(n_clusters=n_clusters, init='random',tol=0.001,
+                             batch_size=batch_size, verbose=verbose, reassignment_ratio=10**-2)
     del verbose
     if(len(article_db) < n_clusters):
         raise ValueError("n_samples=" + str(len(article_db)) + " should be >= n_clusters=" + str(n_clusters))
-    for i in range(0, len(article_db), batch_size):
-        kmeans.fit(v)
+    kmeans.fit(v)
     return kmeans
 
 
@@ -157,12 +157,12 @@ def plot_dendrogram(model, **kwargs):
 # In[7]:
 
 
-def run_clustering(n_articles, n_clusters, debug_print=False):
+def run_clustering(n_articles, n_clusters, max_len=5000, debug_print=False):
     if debug_print:
         ct = time.time()
         print("Running...")
 
-    articles, bag = get_stored_articles(n_articles, debug_print)
+    articles, bag = get_stored_articles(n_articles, max_len, debug_print)
 
     if debug_print:
         print("Retrieved the stored articles.")
@@ -170,7 +170,7 @@ def run_clustering(n_articles, n_clusters, debug_print=False):
         ct = time.time()
         print("Running kmeans algorithm...")
 
-    kmeans = run_kmeans(articles, bag, n_clusters, debug_print)
+    kmeans = run_kmeans(articles, bag, n_clusters, max_len, debug_print)
 
     if debug_print:
         print("Running Agglomerative algorithm...")
@@ -257,18 +257,73 @@ def predict(kmeans, tree, contents):
 # In[11]:
 
 
+def evaluate(kmeans, articles):
+    n_category = ['사회','정치','IT','경제','생활','오피니언','세계']
+    article_category = {}
+    for i in n_category:
+        article_category[i] = []
+    for i, article in enumerate(articles):
+        category = article['article']['category']
+        if category != '':
+            article_category[category].append(i)
+    #print(article_category)
+    for key, i in article_category.items():
+        sum = 0
+        for j in i:
+            for k in i:
+                sum += np.linalg.norm(
+                    kmeans.cluster_centers_[kmeans.labels_[j]] - 
+                    kmeans.cluster_centers_[kmeans.labels_[k]]
+                )
+        sum /= (len(i) * len(i))
+        print('category: ' + key + ',cost= ' + str(sum))
+    sum = 0
+    for i in range(len(articles)):
+        for j in range(len(articles)):
+            sum += np.linalg.norm(
+                kmeans.cluster_centers_[kmeans.labels_[i]] - 
+                kmeans.cluster_centers_[kmeans.labels_[j]]
+            )
+    sum /= (len(articles) * len(articles))
+    print('total: cost= ' + str(sum))
+    sum = 0
+    n = 0
+    for i, item in enumerate(articles):
+        for j, jtem in enumerate(articles):
+            if(item['article']['category'] != jtem['article']['category']):
+                sum += np.linalg.norm(
+                    kmeans.cluster_centers_[kmeans.labels_[i]] - 
+                    kmeans.cluster_centers_[kmeans.labels_[j]]
+                )
+                n += 1
+    if(len(articles) > 1):
+        sum /= n
+    print("cost(different category):", sum)
+
+
+# In[12]:
+
+
 if __name__ == '__main__':
+    #param: max_len, n_clusters, 
     import winsound
     try:
-        articles, kmeans, tree = run_clustering(500,50, debug_print=True)
+        articles, kmeans, tree = run_clustering(500,50, max_len=8000, debug_print=True)
     except Exception as e:
         winsound.Beep(500,500)
         raise(e)
     winsound.Beep(1000,500)
+    evaluate(kmeans, articles)
     for i in range(50):
         print('category=', i)
-        for article in articles_in_kmeans(kmeans, articles, i):
-            print(article, end='\n\n')
+        for article in all_in_kmeans(kmeans, articles, i):
+            print(article['article']['title'],'((',article['article']['category'],'))', end='\n\n')
         print('=============================================')
         input()
+
+
+# In[ ]:
+
+
+
 
