@@ -14,6 +14,8 @@ from sqlite3 import IntegrityError, OperationalError
 
 import matplotlib.pylab as plt
 import time
+
+import jpype
 from threading import Thread, Lock
 
 
@@ -28,11 +30,35 @@ VECDB_VERSION=7
 # In[3]:
 
 
-def get_stored_articles(num_articles='-1', max_len=5000, debug_print=False):
+def multi_t_process_article(bag, article, result_pool, lock):
+    jpype.attachThreadToJVM()
+    result_pool.append(
+        (article,
+         bag.process(article['contents'], lock=lock)
+        )
+    )
+    return
+
+def multi_t_count(wordcnt, vec, lock):
+    idx = vec[1][0]
+    freq = vec[1][1]
+    length = len(vec[1][0])
+    for i in range(length):
+        lock.acquire()
+        try:
+            wordcnt[idx[i]] += freq[i]
+        except IndexError:
+            wordcnt += [0] * (idx[i] - len(wordcnt) + 1)
+            wordcnt[idx[i]] = freq[i]
+        lock.release()
+    return
+
+
+def get_stored_articles(num_articles='-1', max_len=5000, num_threads=32, debug_print=False):
     vecs = []
     bag = FONTBagOfWord()
     bag.from_file(WORDDB)
-    it = 1
+    it = 0
     wordcnt = [0] * len(bag)
     with ArticleDB(ARTICLEDB) as articleDB:
         if num_articles==-1:
@@ -44,29 +70,38 @@ def get_stored_articles(num_articles='-1', max_len=5000, debug_print=False):
             avdb.create(ARTICLEDB)
         except OperationalError:
             avdb.conn(ARTICLEDB)
-        for article in adb:
-            vec = avdb.get(a_id=article['id'],version=VECDB_VERSION)
-            if vec:
-                vec = vec['data']
-                if(len(vec) != 2):
-                    print(vec)
-                vecs.append({'vector':vec,'article':article})
-            else:
-                vec = bag.process(article['contents'])
-                vecs.append({'vector':vec, 'article':article})
-                avdb.update(a_id=article['id'], version=VECDB_VERSION, index=vec[0], freq=vec[1])
-            idx = vec[0]
-            freq = vec[1]
-            length = len(vec[0])
-            for i in range(length):
-                try:
-                    wordcnt[idx[i]] += freq[i]
-                except IndexError:
-                    wordcnt += [0] * (idx[i] - len(wordcnt) + 1)
-                    wordcnt[idx[i]] = freq[i]
-            if debug_print and it % 100 == 0:
+            
+        for articles in np.array_split(adb, len(adb) // num_threads):
+            threads = []
+            results = []
+            lock = Lock()
+            for article in articles:
+                vec = avdb.get(a_id=article['id'], version=VECDB_VERSION)
+                if vec:
+                    vec = vec['data']
+                    if(len(vec) != 2):
+                        print(vec)
+                    results.append((article, vec))
+                else:
+                    threads.append(Thread(target=multi_t_process_article, args=(bag, article, results, lock)))
+
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            for vec in results:
+                avdb.update(a_id=article['id'], version=VECDB_VERSION, index=vec[1][0], freq=vec[1][1])
+            threads = []
+            for vec in results:
+                vecs.append({'article':vec[0], 'vector':vec[1]})
+                threads.append(Thread(target=multi_t_count, args=(wordcnt, vec, lock)))
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            if debug_print:
+                it += num_threads
                 print("Processed", it, "articles")
-            it += 1
 
     rank = np.argsort(np.argsort(wordcnt)[::-1])
     for i in range(len(vecs)):
@@ -109,8 +144,8 @@ def run_kmeans(article_db, bag, n_clusters,  max_len=5000, debug_print=False):
     verbose = 0
     if debug_print:
         verbose=1
-    kmeans = MiniBatchKMeans(n_clusters=n_clusters, init='random',tol=0.001,
-                             batch_size=batch_size, verbose=verbose, reassignment_ratio=10**-2)
+    kmeans = MiniBatchKMeans(n_clusters=n_clusters, init='random',max_iter=150,
+                             batch_size=batch_size, verbose=verbose, reassignment_ratio=0.02)
     del verbose
     if(len(article_db) < n_clusters):
         raise ValueError("n_samples=" + str(len(article_db)) + " should be >= n_clusters=" + str(n_clusters))
@@ -157,12 +192,11 @@ def plot_dendrogram(model, **kwargs):
 # In[7]:
 
 
-def run_clustering(n_articles, n_clusters, max_len=5000, debug_print=False):
+def run_clustering(n_articles, n_clusters, max_len=5000, num_threads=32, debug_print=False):
     if debug_print:
         ct = time.time()
         print("Running...")
-
-    articles, bag = get_stored_articles(n_articles, max_len, debug_print)
+    articles, bag = get_stored_articles(n_articles, max_len=max_len, num_threads=num_threads, debug_print=debug_print)
 
     if debug_print:
         print("Retrieved the stored articles.")
@@ -308,7 +342,7 @@ if __name__ == '__main__':
     #param: max_len, n_clusters, 
     import winsound
     try:
-        articles, kmeans, tree = run_clustering(500,50, max_len=8000, debug_print=True)
+        articles, kmeans, tree = run_clustering(1500,50, num_threads=64,max_len=8000, debug_print=True)
     except Exception as e:
         winsound.Beep(500,500)
         raise(e)
@@ -320,10 +354,4 @@ if __name__ == '__main__':
             print(article['article']['title'],'((',article['article']['category'],'))', end='\n\n')
         print('=============================================')
         input()
-
-
-# In[ ]:
-
-
-
 

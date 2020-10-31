@@ -153,7 +153,7 @@ class FONTBagOfWord:
     def __len__(self):
         return len(self.__wordvec_dict)
 
-    def process(self, src='')->(list,list):
+    def process(self, src='', lock=None)->(list,list):
         indexvec = []
         freqvec = []
         article_headers=['(서울=연합뉴스)','[서울=뉴시스]','[파이낸셜뉴스]','(서울=뉴스1)']
@@ -177,6 +177,8 @@ class FONTBagOfWord:
         debug_print(pos)
         #get (at most) 200s of most commonly used words
         cnt = Counter(pos).most_common(200)
+        if(lock is not None):
+            lock.acquire()
         for i in cnt:
             word_to_search = i[0]
             word_cnt = i[1]
@@ -194,6 +196,8 @@ class FONTBagOfWord:
     
             indexvec.append(word_index)
             freqvec.append(word_cnt)
+        if(lock is not None):
+            lock.release()
         return indexvec, freqvec
 
 
