@@ -12,6 +12,16 @@ import json
 # In[2]:
 
 
+class Article:
+    def __init__(self, title, date, contents, category1, category2, paper, url):
+        self.title = title
+        self.date = date
+        self.contents = contents
+        self.category1 = category1
+        self.category2 = category2
+        self.paper = paper
+        self.url = url
+
 class ArticleDB:
     def __init__(self, filename=''):
         self.__conn = None
@@ -33,12 +43,14 @@ class ArticleDB:
         self.__conn = sqlite3.connect(filename)
         self.__cursor = self.__conn.cursor()
         self.__cursor.execute('''CREATE TABLE ARTICLE
-                                (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                 title TEXT NOT NULL,
-                                 date TEXT NOT NULL,
-                                 contents TEXT NOT NULL,
-                                 category TEXT,
-                                 url TEXT NOT NULL UNIQUE
+                                (Id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                 Title TEXT,
+                                 Date VARCHAR(20),
+                                 Contents TEXT,
+                                 Category1 VARCHAR(8),
+                                 Category2 VARCHAR(8),
+                                 Paper VARCHAR(10),
+                                 URL TEXT NOT NULL UNIQUE
                                  )''')
         self.__conn.commit()
     
@@ -49,11 +61,12 @@ class ArticleDB:
 
     def get(self, _id='', category='', url=''):
         if _id:
-            self.__cursor.execute("SELECT * FROM ARTICLE WHERE id=?", (_id,))
+            self.__cursor.execute("SELECT * FROM ARTICLE WHERE Id=?", (_id,))
         elif category:
-            self.__cursor.execute("SELECT * FROM ARTICLE WHERE category=?",(category,))
+            #FIXME: CATEGORY IS A SET OF COMMON CATEGORIES, NOT COMMON CATEGORY & DETAILED CATEGORY
+            self.__cursor.execute("SELECT * FROM ARTICLE WHERE Category1=?",(category,))
         elif url:
-            self.__cursor.execute("SELECT * FROM ARTICLE WHERE url=?", (url,))
+            self.__cursor.execute("SELECT * FROM ARTICLE WHERE URL=?", (url,))
         else:
             self.__cursor.execute("SELECT * FROM ARTICLE")
         ret = self.__cursor.fetchall()
@@ -63,7 +76,10 @@ class ArticleDB:
                       'date':ret[r][2],
                       'contents':ret[r][3],
                       'category':ret[r][4],
-                      'url':ret[r][5]}
+                      'Category1':ret[r][4],
+                      'Category2':ret[r][5],
+                      'paper': ret[r][6],
+                      'url':ret[r][7]}
         return ret
 
     def get_random(self, cnt):
@@ -75,13 +91,16 @@ class ArticleDB:
                       'date':ret[r][2],
                       'contents':ret[r][3],
                       'category':ret[r][4],
-                      'url':ret[r][5]}
+                      'Category1':ret[r][4],
+                      'Category2':ret[r][5],
+                      'paper': ret[r][6],
+                      'url':ret[r][7]}
         return ret
 
-    def update(self, title, date, contents, category, url):
+    def update(self, title, date, contents, category1, category2, paper, url):
         
-        self.__cursor.execute('INSERT INTO ARTICLE (title, date, contents, category, url) VALUES (?,?,?,?,?)', 
-                                 (title, date, contents, category, url))
+        self.__cursor.execute('INSERT INTO ARTICLE (Title, Date, Contents, Category1, Category2, URL) VALUES (?,?,?,?,?,?)', 
+                                 (title, date, contents, category1, category2, paper, url))
         self.__conn.commit()
 
     def close(self):
