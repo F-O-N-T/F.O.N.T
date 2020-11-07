@@ -22,7 +22,7 @@ import re
 
 
 import sqlite3
-from sqlite3 import OperationalError
+from sqlite3 import OperationalError, IntegrityError
 
 
 # In[4]:
@@ -61,6 +61,9 @@ class WordDB:
         self.__cursor = self.__conn.cursor()
         self.__cursor.execute('''CREATE TABLE WORDLIST
                                 (id INTEGER PRIMARY KEY AUTOINCREMENT, word TEXT NOT NULL)''')
+        self.__cursor.execute('''CREATE TABLE STOPWORD
+                                (id INTEGER PRIMARY KEY AUTOINCREMENT, key INTEGER NOT NULL UNIQUE,
+                                 FOREIGN KEY(key) REFERENCES WORDLIST(id))''')
         self.__conn.commit()
 
     def conn(self, filename):
@@ -76,13 +79,38 @@ class WordDB:
             self.__cursor.execute("INSERT INTO WORDLIST (word) VALUES (?)", (word, ))
         self.__conn.commit()
 
+    def add_stopword(self, wordlist):
+        for word in wordlist:
+            self.__cursor.execute("SELECT id FROM WORDLIST WHERE word=?", (word,))
+            one = self.__cursor.fetchone()
+            if not one:
+                self.__cursor.execute("INSERT INTO WORDLIST (word) VALUES (?)", (word, ))
+                self.__cursor.execute("SELECT id FROM WORDLIST WHERE word=?", (word,))
+                one = self.__cursor.fetchone()
+            try:
+                self.__cursor.execute("INSERT INTO STOPWORD (key) VALUES (?)", (one[0],))
+            except IntegrityError as e:
+                pass
+        self.__conn.commit()
+
+    def is_stopword(self, key):
+        self.__cursor.execute("SELECT * FROM STOPWORD WHERE key=?", (key,))
+        if(self.__cursor.fetchone()):
+            return true
+        else:
+            return false
+    
+    def get_stopword(self):
+        self.__cursor.execute("SELECT key FROM STOPWORD")
+        return [i[0] for i in self.__cursor.fetchall()]
+
     def close(self):
         self.__conn.close()
         self.__conn = None
         self.__cursor = None
 
 
-# In[11]:
+# In[6]:
 
 
 class FONTBagOfWord:
@@ -99,7 +127,9 @@ class FONTBagOfWord:
         self.__word_db = WordDB()
         self.__wordvec_index = [] #wdictionary of wordvec with its index {index:wordvec}
         self.__wordvec_dict = {} #wdictionary of wordvec with its index {wordvec:index}
+        self.__stopword_index = []
         self.__new_words = []
+        self.__new_stopwords = []
         self.__updated = False
         self.__han_filter = re.compile('[ ㄱ-ㅣ가-힣]+')
         
@@ -117,19 +147,25 @@ class FONTBagOfWord:
         except:
             self.__word_db.conn(filename)
         try:
-            length = len(self.__word_db.get())
+            wdb = self.__word_db.get()
+            length = len(wdb)
             self.__wordvec_index = [None] * (length + 1)
             self.__wordvec_index[0] = 0
-            for col in self.__word_db.get():
+            for col in wdb:
                 self.__wordvec_index[col[0]]=col[1] #(index to word)
                 self.__wordvec_dict[col[1]]=col[0] #(word to index)
+            del wdb
+            self.__stopword_index = [i for i in self.__word_db.get_stopword()]
+            
         finally:
             self.__word_db.close()
     
     def to_file(self, filename):
         self.__word_db.conn(filename)
         self.__word_db.update(self.__new_words)
+        self.__word_db.add_stopword(self.__new_stopwords)
         self.__new_words = []
+        self.__new_stopwords = []
         self.__updated = False
         self.__word_db.close()
     
@@ -143,15 +179,36 @@ class FONTBagOfWord:
         return self.__wordvec_dict.keys().__iter__()
 
     def get(self, i):
-        if type(i) == int:
+        if isinstance(i, int):
             return self.__wordvec_index[i]
-        if type(i) == str:
+        if isinstance(i, str):
             return self.__wordvec_dict[i]
         else:
-            raise IndexError("FONTBagOfWord index out of range")
+            try:
+                i = int(i)
+            except ValueError:
+                pass
+            else:
+                return self.__wordvec_index[i]
+            raise IndexError("FONTBagOfWord index out of range:{}<{}>".format(type(i), i))
 
     def __len__(self):
         return len(self.__wordvec_dict)
+
+    def add_stopword(self, stopword):
+        try:
+            stopword_idx = self.get(stopword)
+        except:
+            self.__wordvec_index.append(stopword)
+            self.__wordvec_dict[stopword] = len(self.__wordvec_dict)
+            stopword_idx = self.__wordvec_dict[stopword]
+
+        self.__stopword_index.append(stopword_idx)
+        self.__new_stopwords.append(stopword)
+        self.__updated = False
+
+    def get_stopword(self):
+        return self.__stopword_index
 
     def process(self, src='', lock=None)->(list,list):
         indexvec = []
@@ -193,15 +250,15 @@ class FONTBagOfWord:
                 
                 self.__new_words.append(word_to_search)
                 self.__updated = True
-    
-            indexvec.append(word_index)
-            freqvec.append(word_cnt)
+            if(word_index not in self.__stopword_index):
+                indexvec.append(word_index)
+                freqvec.append(word_cnt)
         if(lock is not None):
             lock.release()
         return indexvec, freqvec
 
 
-# In[12]:
+# In[7]:
 
 
 def test_tagger_konlpy():
@@ -214,7 +271,7 @@ def test_tagger_konlpy():
         print(pos)
 
 
-# In[13]:
+# In[8]:
 
 
 def test_font_bag_of_word(filename = ''):
@@ -229,10 +286,21 @@ def test_font_bag_of_word(filename = ''):
     print(bag)
     for i in bag:
         print(i, end=' ')
+    print('test for adding stopword')
+    while True:
+        src = input()
+        if(src == ''):
+            break
+        bag.add_stopword(src)
+    print(bag)
+    for i in bag:
+        print(i, end=' ')
+    print(bag.get_stopword())
+
     bag.to_file(filename)
 
 
-# In[14]:
+# In[9]:
 
 
 if __name__ == '__main__':
